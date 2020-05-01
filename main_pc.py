@@ -6,7 +6,7 @@ import torch.nn.functional as F
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
-import cv2, tqdm
+import os, cv2, tqdm
 
 def point_cloud_to_panorama(point_cloud,
 							panorama_size=[512, 256],
@@ -130,14 +130,15 @@ if __name__ == '__main__':
 		dis_file = img_file.replace('_street_rgb', '_proj_dis')
 		pc = pano_img_dis_to_point_cloud(Image.open(img_file), Image.open(dis_file).convert('P'))
 		res = []
-		for i in np.linspace(-1, 1, 21):
+		for i in np.linspace(-1.5, 1.5, 21):
 			pc[:, 2] -= float(i * 20)
 
 			fake_img = point_cloud_to_panorama(pc)
 			mask = np.isnan(fake_img.sum(axis=-1))
 			fake_img[mask] = [0, 0, 0]
-			fake_img = cv2.inpaint(fake_img.astype(np.uint8), mask.astype(np.uint8), 3, cv2.INPAINT_TELEA)
-			res.append(Image.fromarray(fake_img))
+			fake_img_filled = cv2.inpaint(fake_img.astype(np.uint8), mask.astype(np.uint8), 3, cv2.INPAINT_TELEA)
+			to_save = np.hstack([fake_img_filled, fake_img]).astype(np.uint8)
+			res.append(Image.fromarray(to_save))
 
 			pc[:, 2] += float(i * 20)
 

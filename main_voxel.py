@@ -250,7 +250,7 @@ if __name__ == '__main__':
 	org_center_loc = np.array([[128, 128]] * num)
 
 	# files = sorted(glob.glob('/home/zoli/xiaohu_new_data/train2_new/*_sate_depth.png'))
-	files = sorted(glob.glob('*_sate_depth.png'))
+	files = sorted(glob.glob('../Pano2StreetVideoOld/data/*_sate_depth.png'))
 
 	for file in files:
 
