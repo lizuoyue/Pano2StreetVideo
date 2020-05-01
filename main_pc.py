@@ -141,7 +141,7 @@ if __name__ == '__main__':
 
 			pc[:, 2] += float(i * 20)
 
-		res[0].save(f'{os.path.basename(img_file).replace('.png', '.gif')}', save_all=True, append_images=res[1:])
+		res[0].save(os.path.basename(img_file).replace('.png', '.gif'), save_all=True, append_images=res[1:])
 
 
 
