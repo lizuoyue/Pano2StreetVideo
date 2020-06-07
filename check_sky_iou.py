@@ -14,5 +14,5 @@ if __name__ == '__main__':
 		label[..., 2] -= 180
 
 		sky1 = depth > 250
-		sky2 = (label ** 2).sum(dim=-1) == 0
+		sky2 = (label ** 2).sum(axis=-1) == 0
 		print((sky1 & sky2).sum() / (sk1 | sky2).sum())
