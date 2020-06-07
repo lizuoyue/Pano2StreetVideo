@@ -18,5 +18,6 @@ if __name__ == '__main__':
 		sky2 = (label ** 2).sum(axis=-1) == 0
 		res.append(((sky1 & sky2).sum() / (sky1 | sky2).sum(), file))
 
+	sort(res)
 	for item in res:
 		print(item)
