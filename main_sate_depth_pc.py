@@ -5,7 +5,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
+from matplotlib.cm import get_cmap
+cmap = get_cmap('viridis')
+# from mpl_toolkits.mplot3d import Axes3D
+from main_pc import point_cloud_to_panorama
+import cv2
 
 """
 3D Voxel Grid
@@ -16,8 +20,6 @@ from mpl_toolkits.mplot3d import Axes3D
 	|/  |/
 	y   z
 """
-
-  # noqa: F401 unused import
 
 def visualize_voxel_grid(voxel_occupy):
 	# voxel_occupy: np.array np.bool
@@ -41,7 +43,7 @@ def satellite_elevation_to_voxel_grid(satellite_elevation,
 									  grid_shape=[128, 128, 128],
 									  center_loc=None,
 									  center_bias=None,
-									  same_elevation=False):
+									  same_elevation=True):
 	"""
 	Input:
 		satellite_elevation:	torch tensor (batch_size, nrow, ncol)
@@ -243,64 +245,128 @@ def warp(src_img, panorama_voxel_idx_batch, ref):
 
 if __name__ == '__main__':
 
-	num = 9
-	step = 10.0
-	bs = num
-	step = np.array([list(range(-int(num/2), num-int(num/2)))] * 2).T * step
-	org_center_loc = np.array([[128, 128]] * num)
+	div = 4
+	div_p = div + 1
+	div_m = div - 1
+	div_inv = 1.0 / div
 
 	# files = sorted(glob.glob('/home/zoli/xiaohu_new_data/train2_new/*_sate_depth.png'))
 	files = sorted(glob.glob('../Pano2StreetVideoOld/data/*_sate_depth.png'))
 
-	for file in files:
+	lin = torch.linspace(start=div_inv, end=(1 - div_inv), steps=div_m)
+	lin = torch.linspace(start=div_inv, end=(1 - div_inv), steps=div_m)
+	y_grid, x_grid = torch.meshgrid([lin, lin])
+	# print(x_grid)
+	# print(y_grid)
+	# print(lin)
+	# quit()
 
-		img = np.array(Image.open(file.replace('_sate_depth.png', '_street_rgb.png')))
-		img_tensor = torch.from_numpy(img)
-		# plt.imshow(img)
+	for n, file in enumerate(files):
+
+		theta = float(file.replace('_sate_depth.png', '').split(',')[2]) / 360.0 * np.pi * 2.0
+		theta = torch.Tensor([theta])
+		rot = torch.Tensor([
+			[torch.cos(theta), -torch.sin(theta),  0],
+			[               0,                 0, -1],
+			[torch.sin(theta),  torch.cos(theta),  0],
+		])
+
+		depth = torch.from_numpy(np.array(Image.open(file).convert('L'))).float()
+		max_depth, max_idx = F.max_pool2d( depth.unsqueeze(dim=0), kernel_size=2, stride=1, padding=0, dilation=1, return_indices=True, ceil_mode=False)
+		min_depth, min_idx = F.max_pool2d(-depth.unsqueeze(dim=0), kernel_size=2, stride=1, padding=0, dilation=1, return_indices=True, ceil_mode=False)
+		
+		depth = depth.int()
+		max_depth, max_idx =  max_depth[0].int(), max_idx[0]
+		min_depth, min_idx = -min_depth[0].int(), min_idx[0]
+
+		vdiff = torch.abs(depth[1:,:] - depth[:-1,:])
+		hdiff = torch.abs(depth[:,1:] - depth[:,:-1])
+		cdiff = max_depth - min_depth
+
+		# plt.imshow(vdiff.numpy(), vmin=-10, vmax=10)
+		# plt.show()
+		# plt.imshow(hdiff.numpy(), vmin=-10, vmax=10)
+		# plt.show()
+		# plt.imshow(cdiff.numpy(), vmin=-10, vmax=10)
 		# plt.show()
 
-		direction = float(file.replace('_sate_depth.png', '').split(',')[2]) / 360.0 * np.pi * 2.0
+		if True:
 
-		elevation_batch = np.stack([np.array(Image.open(file).convert('L'))] * num)
-		elevation_batch = torch.from_numpy(elevation_batch).float()
-		direction_batch = np.array([direction] * num)
-		direction_batch = torch.from_numpy(direction_batch).float()
+			hehe = np.array(Image.open(file.replace('_sate_depth.png', '_proj_dis.png')).convert('L'))
+			# hehe = cmap(hehe)[..., :3]
 
-		centor_loc_batch = org_center_loc + np.stack([[np.sin(direction), -np.cos(direction)]] * num) * step
-		centor_loc_batch = torch.from_numpy(centor_loc_batch).float()
+			h, w = depth.shape
+			pano_height = max_depth[int(h / 2.0) - 1, int(w / 2.0) - 1] + 3.0
+			center_loc = torch.Tensor([h / 2.0, w / 2.0, pano_height * 2])
 
-		for i in range(int(num/bs)):
+			pc = torch.from_numpy(np.loadtxt(f'{n}.txt', delimiter=';')).float()
+			pc[:,-1] *= 2
 
-			voxel_unsigned_distance, center_grid = satellite_elevation_to_voxel_grid(elevation_batch[0+i*bs:bs+i*bs], center_loc=centor_loc_batch[0+i*bs:bs+i*bs], grid_shape=[256]*3, xy_scale=0.25, z_scale=0.5)
-			panorama_batch, panorama_voxel_idx_batch = voxel_grid_to_panorama(voxel_unsigned_distance, center_grid, direction_batch[0+i*bs:bs+i*bs])
-			warpped_img_batch = warp(img_tensor, panorama_voxel_idx_batch, int(num / 2))
+			pc_local = torch.t(torch.matmul(rot, torch.t(pc - center_loc)))
 
-			for j in range(bs):
-				if j != 4:
-					continue
-				img = (panorama_batch[j].numpy())
-				img[img>116]=116
-				img = img/img.max() * 255
+			# li = []
+			for i in torch.linspace(start=5, end=-5, steps=9):
+				pc_local_i = pc_local * 1.0
+				pc_local_i[:,-1] += i
+				fake_img = point_cloud_to_panorama(pc_local_i.numpy())[..., 0]
+				# fake_img = cv2.inpaint(fake_img.astype(np.uint8), np.isnan(fake_img).astype(np.uint8), 3, cv2.INPAINT_TELEA)
+				# fake_img = cmap(fake_img)[..., :3]
 
-			# 	img = panorama_voxel_idx_batch[j].numpy()
-			# 	a = img%256
-			# 	a_res = ((img-a)/256).astype(np.int32)
-			# 	b = a_res%256
-			# 	c = ((a_res-b)/256).astype(np.int32)%256
-			# 	img = np.stack([c,b,a], axis=-1)
+				# li.append(Image.fromarray((np.vstack([fake_img, hehe]) * 255).astype(np.uint8)))
 
-				plt.imshow(img.astype(np.uint8))
+			# li[0].save('%03d_pc.gif' % n, save_all=True, append_images=li[1:])
+				plt.imshow(np.vstack([fake_img, hehe]))
 				plt.show()
-				# plt.imshow(warpped_img_batch[j].numpy())
-				# plt.savefig('%d.png' % (j+i*bs))
-				# plt.clf()
-				# plt.show()
 
-		# quit()
+			continue
 
-		plt.imshow(np.array(Image.open(file.replace('_sate_depth.png', '_proj_dis.png')).convert('L')))
-		plt.show()
+		# Self
+		h, w = depth.shape
+		h_grid, w_grid = torch.meshgrid([torch.arange(h), torch.arange(w)])
+		y = h_grid.view(h, w, 1, 1).expand(h, w, div_m, div_m) + y_grid.view(1, 1, div_m, div_m).expand(h, w, div_m, div_m)
+		x = w_grid.view(h, w, 1, 1).expand(h, w, div_m, div_m) + x_grid.view(1, 1, div_m, div_m).expand(h, w, div_m, div_m)
+		z =  depth.view(h, w, 1, 1).expand(h, w, div_m, div_m).float()
+		pc = [torch.cat([x.reshape(-1, 1), y.reshape(-1, 1), z.reshape(-1, 1)], dim=1)]
 
-		quit()
+		# Vertical
+		for i in torch.arange(1, h):
+			for j in torch.arange(w):
+				num = vdiff[i - 1, j] * div + 1
+				z_lin = torch.linspace(start=depth[i - 1, j], end=depth[i, j], steps=num)
+				pc_add = torch.stack(list(torch.meshgrid([j + lin, i.float(), z_lin])), dim=-1).view(-1, 3)
+				pc.append(pc_add)
+
+		# Horizontal
+		for i in torch.arange(h):
+			for j in torch.arange(1, w):
+				num = hdiff[i, j - 1] * div + 1
+				z_lin = torch.linspace(start=depth[i, j - 1], end=depth[i, j], steps=num)
+				pc_add = torch.stack(list(torch.meshgrid([j.float(), i + lin, z_lin])), dim=-1).view(-1, 3)
+				pc.append(pc_add)
+
+		# Central
+		for i in torch.arange(1, h):
+			for j in torch.arange(1, w):
+				num = cdiff[i - 1, j - 1] * div + 1
+				z_lin = torch.linspace(start=min_depth[i - 1, j - 1], end=max_depth[i - 1, j - 1], steps=num)
+				pc_add = torch.stack(list(torch.meshgrid([j.float(), i.float(), z_lin])), dim=-1).view(-1, 3)
+				pc.append(pc_add)
+
+		pc = torch.cat(pc, dim=0)
+
+		with open(f'{n}.txt', 'w') as f:
+			pc = pc.numpy()
+			pc[:, 1] = h - pc[:, 1]
+			for p in pc:
+				f.write('%.6lf; %.6lf; %.6lf\n' % tuple(p))
+
+
+
+
+
+
+
+
+
 
 

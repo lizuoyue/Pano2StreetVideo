@@ -39,16 +39,19 @@ def point_cloud_to_panorama(point_cloud,
 	min_lat, max_lat = min_max_lat
 	delta_lat = (max_lat - min_lat) / nrow
 	dist = np.sqrt(np.sum(pc ** 2, axis=-1))
+	if pc_info is None:
+		c = 1
+		pc_info = dist[..., np.newaxis]
 
 	valid = (dist > 0)
 	pc = pc[valid]
 	pc_info = pc_info[valid]
 	dist = dist[valid]
 
-	# order = np.argsort(dist)[::-1]
-	# pc = pc[order]
-	# pc_info = pc_info[order]
-	# dist = dist[order]
+	order = np.argsort(dist)[::-1]
+	pc = pc[order]
+	pc_info = pc_info[order]
+	dist = dist[order]
 
 	x, y, z = pc[:,0], pc[:,1], pc[:,2]
 
@@ -85,6 +88,10 @@ def pano_img_dis_to_point_cloud(img,
 
 	img = np.array(img)
 	dis = np.array(dis).astype(np.float)
+
+	if False:
+		dis = dis * 0 + 50
+
 	assert(img.shape[:2] == dis.shape[:2])
 	nrow, ncol, c = img.shape
 	min_lat, max_lat = min_max_lat
@@ -101,9 +108,10 @@ def pano_img_dis_to_point_cloud(img,
 
 	color = img.reshape((-1, 3))
 	pc = (v.T * dis.reshape((-1))).T
-	valid = dis.reshape((-1)) > 1e-3
+	valid1 = dis.reshape((-1)) > 1e-3
+	valid2 = dis.reshape((-1)) < 200
 
-	return np.hstack([pc, color])[valid]
+	return np.hstack([pc, color])[valid1 & valid2]
 
 
 if __name__ == '__main__':
@@ -124,25 +132,54 @@ if __name__ == '__main__':
 		plt.imshow(img)
 		plt.show()
 
-	img_files = sorted(glob.glob('/home/zoli/xiaohu_new_data/train2_new/*_street_rgb.png'))
+	STEP = 10
+	# img_files = sorted(glob.glob('/home/zoli/xiaohu_new_data/train2_new/*_street_rgb.png'))
 	# img_files = sorted(glob.glob('../Pano2StreetVideoOld/data/*_street_rgb.png'))
-	for img_file in tqdm.tqdm(img_files):
-		dis_file = img_file.replace('_street_rgb', '_proj_dis')
-		pc = pano_img_dis_to_point_cloud(Image.open(img_file), Image.open(dis_file).convert('P'))
+	# for img_file in tqdm.tqdm(img_files):
+	# 	dis_file = img_file.replace('_street_rgb', '_proj_dis')
+	# 	pc = pano_img_dis_to_point_cloud(Image.open(img_file), Image.open(dis_file).convert('L'))
+	# 	res = []
+	# 	for i in np.linspace(-1.5, 1.5, 21):
+	# 		pc[:, 2] -= float(i * STEP)
+	# 		fake_img = point_cloud_to_panorama(pc)
+	# 		mask = np.isnan(fake_img.sum(axis=-1))
+	# 		fake_img[mask] = [0, 0, 0]
+	# 		fake_img_filled = cv2.inpaint(fake_img.astype(np.uint8), mask.astype(np.uint8), 3, cv2.INPAINT_TELEA)
+	# 		to_save = np.hstack([fake_img_filled, fake_img]).astype(np.uint8)
+	# 		res.append(Image.fromarray(to_save))
+	# 		pc[:, 2] += float(i * STEP)
+
+	# 	res[0].save(os.path.basename(img_file).replace('.png', '.gif'), save_all=True, append_images=res[1:])
+
+	# kernel = np.ones((3, 3),np.uint8)
+	kernel = np.array([[0,0,0],[1,1,1],[0,0,0]]).astype(np.uint8)
+
+	for j in range(10):
+		depth = np.array(Image.open('/Users/lizuoyue/Desktop/CVPR_2020_Rebuttal/code/val_ori_sync/images/input_%03d_input.png' % j))[..., 2]
+		depth = Image.fromarray(depth)
+		img = Image.open('/Users/lizuoyue/Desktop/CVPR_2020_Rebuttal/code/val_ori_sync/images/input_%03d_encoded.png' % j)
+		pc = pano_img_dis_to_point_cloud(img, depth)
 		res = []
 		for i in np.linspace(-1.5, 1.5, 21):
-			pc[:, 2] -= float(i * 20)
-
+			pc[:, 2] -= float(i * STEP)
 			fake_img = point_cloud_to_panorama(pc)
 			mask = np.isnan(fake_img.sum(axis=-1))
-			fake_img[mask] = [0, 0, 0]
+
+			ground_mask = mask.astype(np.int32).argmin(axis=0)
+			ground_mask = (((np.ones((512,256)) * np.arange(256)).T) > ground_mask).astype(np.uint8) * 255
+			ground_mask = cv2.erode(ground_mask, kernel, iterations = 1)
+			ground_mask = cv2.dilate(ground_mask, kernel, iterations = 5)
+			ground_mask = cv2.erode(ground_mask, kernel, iterations = 4)
+
+			mask[ground_mask == 0] = False
+			fake_img[mask] = np.nan#[0, 0, 0]
 			fake_img_filled = cv2.inpaint(fake_img.astype(np.uint8), mask.astype(np.uint8), 3, cv2.INPAINT_TELEA)
 			to_save = np.hstack([fake_img_filled, fake_img]).astype(np.uint8)
 			res.append(Image.fromarray(to_save))
+			pc[:, 2] += float(i * STEP)
+		res[0].save('%03d.gif' % j, save_all=True, append_images=res[1:])
 
-			pc[:, 2] += float(i * 20)
 
-		res[0].save(os.path.basename(img_file).replace('.png', '.gif'), save_all=True, append_images=res[1:])
 
 
 
